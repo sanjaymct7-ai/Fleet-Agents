@@ -95,3 +95,11 @@ src/db.py                     Supabase connection helper
    the provider's console and create a new one. (Deleting the commit is not enough.)
 3. The `anon` Supabase key is temporary training wheels. A later phase replaces
    it with least-privilege credentials per agent.
+
+
+
+## Stretch goals (not on critical path)
+
+- **Vector memory (Chroma + HuggingFace)** — planned for a later phase.
+  Goal: let the Recovery agent recall how similar past exceptions were
+  resolved. Not required for Phase 1 or Phase 2 to work.
