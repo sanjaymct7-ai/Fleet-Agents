@@ -1,0 +1,13 @@
+# Phase 1 — kept deliberately small so the free Streamlit Cloud build is fast
+# and there are fewer things that can fail while you're learning.
+streamlit>=1.37
+supabase>=2.6
+langchain>=0.3
+langchain-google-genai>=2.0
+
+# Phase 2 additions (uncomment when we build the planner + map):
+# ortools>=9.10
+# folium>=0.17
+# streamlit-folium>=0.21
+# langchain-groq>=0.2
+# langgraph>=0.2

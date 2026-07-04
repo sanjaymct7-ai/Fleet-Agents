@@ -1,0 +1,9 @@
+# NEVER commit real secrets
+.streamlit/secrets.toml
+
+# Python junk
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
