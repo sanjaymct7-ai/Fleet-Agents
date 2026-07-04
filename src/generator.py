@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 # --- 1) Your city's bounding box: REPLACE with numbers from bboxfinder.com ---
-LAT_MIN, LAT_MAX = 0.0, 0.0     # south edge, north edge
-LNG_MIN, LNG_MAX = 0.0, 0.0     # west edge, east edge
+LAT_MIN, LAT_MAX = 54.919967, 55.010876
+LNG_MIN, LNG_MAX = -1.675758, -1.543236     # west edge, east edge
 
 def random_point() -> tuple[float, float]:
     """A random (lat, lng) inside the city rectangle."""
