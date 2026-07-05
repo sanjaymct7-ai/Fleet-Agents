@@ -37,12 +37,12 @@ ACTIONS = {
 
 def run():
     sb = get_client()
-    pending = (sb.table("proposals")
-               .select("*, exceptions(order_id)")
-               .eq("status", "pending").execute().data)
-    auto = [p for p in pending if p["risk_tier"] in AUTO_TIERS
-            and p["action"] in ACTIONS]
-    frozen = [p for p in pending if p not in auto]
+    rows = (sb.table("proposals")
+            .select("*, exceptions(order_id)")
+            .in_("status", ["pending", "approved"]).execute().data)
+    auto = [p for p in rows if p["action"] in ACTIONS and (
+            p["status"] == "approved" or p["risk_tier"] in AUTO_TIERS)]
+    frozen = [p for p in rows if p not in auto]
 
     for p in auto:
         order_id = p["exceptions"]["order_id"]
