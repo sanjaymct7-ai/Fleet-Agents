@@ -69,23 +69,28 @@ def solve():
     for node in range(1, n):
         if solution.Value(routing.NextVar(manager.NodeToIndex(node))) == manager.NodeToIndex(node):
             dropped.append(stops[node]["order_id"])
+
+    plans = []  # one dict per vehicle: the structured plan
     for v in range(N_VEHICLES):
         index = routing.Start(v)
-        route, load, minutes = [], 0, 0
+        route_stops, load, minutes = [], 0, 0
         while not routing.IsEnd(index):
             node = manager.IndexToNode(index)
             if node != 0:
                 arrive = solution.Value(time_dim.CumulVar(index))
-                route.append(f"#{stops[node]['order_id']}@{arrive//60:02d}:{arrive%60:02d}")
+                route_stops.append({"order_id": stops[node]["order_id"],
+                                    "arrive_min": arrive,
+                                    "day": stops[node]["window"][0][:10]})
                 load += demands[node]
             nxt = solution.Value(routing.NextVar(index))
             minutes += time_cb(index, nxt)
             index = nxt
         total_min += minutes
-        print(f"Vehicle {v}: {len(route)} stops, {load}kg, {minutes} min driving")
-        print(f"   {route}")
+        plans.append({"vehicle": v, "stops": route_stops,
+                      "load_kg": load, "driving_min": minutes})
+        print(f"Vehicle {v}: {len(route_stops)} stops, {load}kg, {minutes} min driving")
     print(f"TOTAL driving: {total_min} min | DROPPED orders: {dropped or 'none'}")
-    return solution
+    return {"plans": plans, "dropped": dropped}
 
 
 if __name__ == "__main__":
