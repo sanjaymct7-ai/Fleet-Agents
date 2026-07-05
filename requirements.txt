@@ -6,8 +6,8 @@ langchain>=0.3
 langchain-google-genai>=2.0
 
 # Phase 2 additions (uncomment when we build the planner + map):
-# ortools>=9.10
-# folium>=0.17
-# streamlit-folium>=0.21
-# langchain-groq>=0.2
-# langgraph>=0.2
+ ortools>=9.10
+ folium>=0.17
+ streamlit-folium>=0.21
+ langchain-groq>=0.2
+ langgraph>=0.2
