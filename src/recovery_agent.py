@@ -46,6 +46,15 @@ def run():
     open_excs = sb.table("exceptions").select("*").eq("status", "open").execute().data
     print(f"{len(open_excs)} open exceptions to judge.")
     for exc in open_excs:
+        if exc["order_id"] is None:      # route-level exception (no_driver)
+            sb.table("proposals").insert({
+                "exception_id": exc["id"], "action": "escalate_to_manager",
+                "reasoning": "entire route unassigned — needs staffing decision",
+                "risk_tier": 3,
+            }).execute()
+            sb.table("exceptions").update({"status": "proposed"}).eq("id", exc["id"]).execute()
+            print(f"  exception {exc['id']} (no_driver) -> escalate [T3]")
+            continue
         order = (sb.table("orders").select("id, customer_tier, priority")
                  .eq("id", exc["order_id"]).single().execute().data)
         verdict = judge(exc, order)

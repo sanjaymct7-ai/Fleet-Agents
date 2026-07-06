@@ -37,8 +37,15 @@ def dispatch():
                 break
 
         if chosen is None:
-            print(f"Route {route['id']} ({first//60:02d}:{first%60:02d}-"
-                  f"{last//60:02d}:{last%60:02d}): NO ELIGIBLE DRIVER — left unassigned")
+            print(f"Route {route['id']}: NO ELIGIBLE DRIVER — raising exception")
+            try:
+                sb.table("exceptions").insert({
+                    "type": "no_driver", "route_id": route["id"],
+                    "detail": f"no driver fits route span "
+                              f"{first//60:02d}:{first%60:02d}-{last//60:02d}:{last%60:02d}",
+                }).execute()
+            except Exception:
+                pass   # unique-rail duplicate — already raised
             continue
 
         sb.table("routes").update({"driver_id": chosen["id"], "status": "assigned"}) \

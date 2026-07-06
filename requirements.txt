@@ -11,3 +11,5 @@ langchain-google-genai>=2.0
  streamlit-folium>=0.21
  langchain-groq>=0.2
  langgraph>=0.2
+
+ streamlit-autorefresh>=1.0
