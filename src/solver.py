@@ -1,12 +1,11 @@
-"""Step 2.4c — VRP with capacity + time windows + droppable orders."""
+"""VRP solver: capacity + time windows + droppable orders.
+Fleet is read from the vehicles table — count and per-vehicle capacities."""
 from datetime import datetime
 
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
+from src.db import get_client
 from src.matrix import get_matrix, load_stops
-
-N_VEHICLES = 4
-VEHICLE_CAPACITY_KG = 450
 
 
 def to_minutes(iso_str: str) -> int:
@@ -14,12 +13,27 @@ def to_minutes(iso_str: str) -> int:
     return dt.hour * 60 + dt.minute
 
 
+def load_vehicles() -> list[dict]:
+    """Only 'active' vehicles work today — maintenance/retired sit out."""
+    return (get_client().table("vehicles")
+            .select("id, name, capacity_kg")
+            .eq("status", "active").order("id").execute().data)
+
+
 def solve():
     stops = load_stops()
+    vehicles = load_vehicles()
+    if not vehicles:
+        print("NO VEHICLES — the active fleet is empty. Add vehicles first.")
+        return None
     matrix = get_matrix(stops)
     n = len(stops)
+    k = len(vehicles)
+    caps = [int(v["capacity_kg"]) for v in vehicles]
+    print(f"Fleet today: {k} vehicles — " +
+          ", ".join(f"{v['name']} ({int(v['capacity_kg'])}kg)" for v in vehicles))
 
-    manager = pywrapcp.RoutingIndexManager(n, N_VEHICLES, 0)
+    manager = pywrapcp.RoutingIndexManager(n, k, 0)
     routing = pywrapcp.RoutingModel(manager)
 
     def time_cb(from_index, to_index):
@@ -35,15 +49,10 @@ def solve():
 
     demand_idx = routing.RegisterUnaryTransitCallback(demand_cb)
     routing.AddDimensionWithVehicleCapacity(
-        demand_idx, 0, [VEHICLE_CAPACITY_KG] * N_VEHICLES, True, "Capacity")
-    routing.AddDimension(
-        transit,
-        60,
-        24 * 60,
-        False,
-        "Time")
-    time_dim = routing.GetDimensionOrDie("Time")
+        demand_idx, 0, caps, True, "Capacity")
 
+    routing.AddDimension(transit, 60, 24 * 60, False, "Time")
+    time_dim = routing.GetDimensionOrDie("Time")
     for node in range(1, n):
         start = to_minutes(stops[node]["window"][0])
         end = to_minutes(stops[node]["window"][1])
@@ -62,18 +71,19 @@ def solve():
 
     solution = routing.SolveWithParameters(params)
     if solution is None:
-        print("NO SOLUTION — constraints impossible (capacity too small?)")
+        print("NO SOLUTION — constraints impossible (fleet too small?)")
         return None
-    
+
     total_min, dropped = 0, []
     for node in range(1, n):
-        if solution.Value(routing.NextVar(manager.NodeToIndex(node))) == manager.NodeToIndex(node):
+        if solution.Value(routing.NextVar(manager.NodeToIndex(node))) == \
+           manager.NodeToIndex(node):
             dropped.append(stops[node]["order_id"])
 
-    plans = []  # one dict per vehicle: the structured plan
-    for v in range(N_VEHICLES):
+    plans = []
+    for v in range(k):
         index = routing.Start(v)
-        route_stops, load, minutes = [], 0, 0
+        route_stops, load, minutes_drv = [], 0, 0
         while not routing.IsEnd(index):
             node = manager.IndexToNode(index)
             if node != 0:
@@ -83,12 +93,16 @@ def solve():
                                     "day": stops[node]["window"][0][:10]})
                 load += demands[node]
             nxt = solution.Value(routing.NextVar(index))
-            minutes += time_cb(index, nxt)
+            minutes_drv += time_cb(index, nxt)
             index = nxt
-        total_min += minutes
-        plans.append({"vehicle": v, "stops": route_stops,
-                      "load_kg": load, "driving_min": minutes})
-        print(f"Vehicle {v}: {len(route_stops)} stops, {load}kg, {minutes} min driving")
+        total_min += minutes_drv
+        plans.append({"vehicle_id": vehicles[v]["id"],
+                      "vehicle_name": vehicles[v]["name"],
+                      "capacity_kg": caps[v],
+                      "stops": route_stops, "load_kg": load,
+                      "driving_min": minutes_drv})
+        print(f"{vehicles[v]['name']}: {len(route_stops)} stops, "
+              f"{load}/{caps[v]}kg, {minutes_drv} min driving")
     print(f"TOTAL driving: {total_min} min | DROPPED orders: {dropped or 'none'}")
     return {"plans": plans, "dropped": dropped}
 

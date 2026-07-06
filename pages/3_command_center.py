@@ -1,14 +1,11 @@
 """The warehouse manager's single screen: everything, live."""
 import folium
+import pandas as pd
 import streamlit as st
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.types import Command
 from streamlit_autorefresh import st_autorefresh
 from streamlit_folium import st_folium
 
 from src.db import get_client
-from src.escalation_graph import build_graph, summarize
-from src.executor import run as run_executor
 from src.matrix import DEPOT
 from src.run_day import run_day
 
@@ -22,23 +19,9 @@ if not st.session_state.running_day:
 
 sb = get_client()
 
-
-@st.cache_resource
-def get_graph():
-    return build_graph(MemorySaver())
-
-
-graph = get_graph()
-
-# ---------- 1) THE BANNER: escalations are unmissable ----------
-t3 = (sb.table("proposals").select("*, exceptions(id, type, detail, order_id)")
-      .eq("status", "pending").eq("risk_tier", 3).execute().data)
-if t3:
-    st.error(f"🔴 {len(t3)} ESCALATION(S) NEED YOUR DECISION — see Approvals panel below")
-
 st.title("🚚 Fleet Command Center")
 
-# ---------- 2) THE BUTTON: run the whole day from here ----------
+# ---------- THE BUTTON: run the whole day from here ----------
 if st.button("▶ Run a full day", type="primary",
              disabled=st.session_state.running_day):
     st.session_state.running_day = True
@@ -50,7 +33,7 @@ if st.button("▶ Run a full day", type="primary",
         st.session_state.running_day = False
     st.rerun()
 
-# ---------- 3) KPI TILES ----------
+# ---------- KPI TILES ----------
 orders = sb.table("orders").select("status").execute().data
 stops = (sb.table("route_stops")
          .select("status, planned_arrival, actual_arrival").execute().data)
@@ -76,7 +59,7 @@ open_exc = (sb.table("exceptions").select("id", count="exact", head=True)
             .eq("status", "open").execute().count)
 k5.metric("Open exceptions", open_exc)
 
-# ---------- 4) LIVE MAP + FEEDS ----------
+# ---------- LIVE MAP + FEEDS ----------
 left, right = st.columns([3, 2])
 
 with left:
@@ -131,38 +114,26 @@ with right:
         with st.expander(f"✉️ order #{nt['order_id']} — {nt['kind']} `{nt['status']}`"):
             st.write(nt.get("body") or "_not written yet_")
 
-# ---------- 5) APPROVALS: the human-in-the-loop, embedded ----------
-st.divider()
-st.subheader("⚖️ Approvals")
-if not t3:
-    st.success("Nothing waiting on you.")
-for p in t3:
-    config = {"configurable": {"thread_id": str(p["id"])}}
-    if not graph.get_state(config).next:
-        graph.invoke({"proposal_id": p["id"], "exception_id": p["exceptions"]["id"],
-                      "summary": summarize(sb, p), "verdict": ""}, config)
-    with st.container(border=True):
-        st.write(summarize(sb, p))
-        c1, c2, _ = st.columns([1, 1, 4])
-        if c1.button("✅ Approve", key=f"a{p['id']}"):
-            graph.invoke(Command(resume="approve"), config)
-            st.rerun()
-        if c2.button("❌ Reject", key=f"r{p['id']}"):
-            graph.invoke(Command(resume="reject"), config)
-            st.rerun()
-
-if st.button("▶ Run executor (apply approved actions)"):
-    run_executor()
-    st.rerun()
-
-# ---------- 6) DAILY REPORT ----------
+# ---------- DAILY REPORT (as a table) ----------
 st.divider()
 st.subheader("📊 Daily report")
 rep = (sb.table("reports").select("created_at, stats, summary")
        .order("id", desc=True).limit(1).execute().data)
 if rep:
     st.write(rep[0]["summary"])
-    with st.expander("Full statistics"):
-        st.json(rep[0]["stats"])
+
+    def flatten(stats: dict) -> list[dict]:
+        rows = []
+        for key, value in stats.items():
+            label = key.replace("_", " ").title()
+            if isinstance(value, dict):
+                for sub_key, sub_val in value.items():
+                    rows.append({"Metric": f"{label} — {sub_key}", "Value": sub_val})
+            else:
+                rows.append({"Metric": label, "Value": value})
+        return rows
+
+    df = pd.DataFrame(flatten(rep[0]["stats"]))
+    st.table(df.set_index("Metric"))
 else:
     st.caption("No report yet — run a day.")

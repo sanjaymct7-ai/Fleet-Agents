@@ -1,7 +1,8 @@
 """Step 2.5 — Route Planning agent's write permission:
-persist solver output into routes + route_stops, mark orders planned."""
+persist solver output into routes + route_stops, mark orders planned.
+Now records which vehicle drove each route."""
 from src.db import get_client
-from src.solver import solve, VEHICLE_CAPACITY_KG
+from src.solver import solve
 
 
 def minutes_to_ts(day: str, minutes: int) -> str:
@@ -24,7 +25,8 @@ def plan_and_save():
         if not plan["stops"]:
             continue  # empty vehicle: no route row needed
         route = sb.table("routes").insert({
-            "vehicle_capacity_kg": VEHICLE_CAPACITY_KG,
+            "vehicle_id": plan["vehicle_id"],
+            "vehicle_capacity_kg": plan["capacity_kg"],
             "status": "planned",
         }).execute().data[0]
 
@@ -37,7 +39,7 @@ def plan_and_save():
         } for i, s in enumerate(plan["stops"])]
         sb.table("route_stops").insert(stop_rows).execute()
         planned_order_ids += [s["order_id"] for s in plan["stops"]]
-        print(f"Saved route {route['id']}: {len(stop_rows)} stops")
+        print(f"Saved route {route['id']} ({plan['vehicle_name']}): {len(stop_rows)} stops")
 
     if planned_order_ids:
         sb.table("orders").update({"status": "planned"}) \
