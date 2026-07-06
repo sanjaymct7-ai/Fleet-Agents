@@ -1,31 +1,34 @@
-"""Step 4.4 — Recovery agent: judge exceptions, PROPOSE fixes. Never executes.
-Reads exceptions+orders, writes proposals only."""
+"""Recovery agent (5/8): judge exceptions, PROPOSE fixes. Never executes.
+Reads exceptions+orders, writes proposals only.
+LLM chooses from a fixed menu; deterministic rules assign risk tiers.
+Everything auto-executes — no human approval required."""
 import json
 
 from src.db import get_client
 from src.llm import ask_llm
 
-MENU = ["notify_delay", "reschedule_next_day", "escalate_to_manager"]
+MENU = ["notify_delay", "reschedule_next_day"]
 
 PROMPT = """You are a logistics recovery planner. An exception occurred.
 Exception: {exc_type} — {detail}
 Order: #{order_id}, customer tier: {tier}, priority: {priority} (1=highest)
 
 Choose ONE action from exactly this list: {menu}
-Guidance: minor lateness usually needs only a delay notification; a failed
-delivery usually needs rescheduling; anything involving an enterprise customer
-or priority 1 deserves escalation.
+Guidance: minor lateness needs only a delay notification; a failed
+delivery needs rescheduling.
 
 Reply with ONLY JSON: {{"action": "...", "reasoning": "one sentence"}}"""
 
 
 def risk_tier(action: str, tier: str, exc_type: str) -> int:
-    """Deterministic rules decide risk — never the LLM."""
-    if tier == "enterprise" or action == "escalate_to_manager":
-        return 3
-    if exc_type == "failed_delivery" or action == "reschedule_next_day":
-        return 2 if tier == "premium" else 1
-    return 0  # notify_delay for a standard customer
+    """Deterministic rules decide risk — never the LLM.
+    Everything auto-executes; tiers just control visibility/flagging
+    in the feed and daily report, not human approval."""
+    if exc_type == "failed_delivery":
+        return 1
+    if tier == "enterprise":
+        return 1
+    return 0
 
 
 def judge(exc: dict, order: dict) -> dict | None:
@@ -46,15 +49,15 @@ def run():
     open_excs = sb.table("exceptions").select("*").eq("status", "open").execute().data
     print(f"{len(open_excs)} open exceptions to judge.")
     for exc in open_excs:
-        if exc["order_id"] is None:      # route-level exception (no_driver)
-            sb.table("proposals").insert({
-                "exception_id": exc["id"], "action": "escalate_to_manager",
-                "reasoning": "entire route unassigned — needs staffing decision",
-                "risk_tier": 3,
-            }).execute()
-            sb.table("exceptions").update({"status": "proposed"}).eq("id", exc["id"]).execute()
-            print(f"  exception {exc['id']} (no_driver) -> escalate [T3]")
+
+        # Route-level exception (no_driver): no order, no customer action
+        # possible — just log it and resolve, nothing to approve or execute.
+        if exc["order_id"] is None:
+            sb.table("exceptions").update({"status": "resolved"}).eq("id", exc["id"]).execute()
+            print(f"  exception {exc['id']} (no_driver) -> logged, resolved "
+                  f"(staffing note — no customer action available)")
             continue
+
         order = (sb.table("orders").select("id, customer_tier, priority")
                  .eq("id", exc["order_id"]).single().execute().data)
         verdict = judge(exc, order)
@@ -73,3 +76,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+    

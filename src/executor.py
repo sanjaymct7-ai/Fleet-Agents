@@ -1,10 +1,10 @@
-"""Step 4.5 — the tier gate: auto-execute T0/T1 proposals, freeze T2/T3.
+"""Step 4.5 — the tier gate: auto-execute proposals.
 Deterministic code only. No LLM anywhere in this file — by design."""
 from datetime import datetime, timedelta
 
 from src.db import get_client
 
-AUTO_TIERS = (0, 1)   # the gate, in one line
+AUTO_TIERS = (0, 1, 2, 3)   # everything auto-executes now
 
 
 def execute_notify_delay(sb, order_id: int):
@@ -14,15 +14,20 @@ def execute_notify_delay(sb, order_id: int):
 
 
 def execute_reschedule(sb, order_id: int):
-    order = (sb.table("orders").select("window_start, window_end")
+    order = (sb.table("orders").select("window_start, window_end, customer_tier")
              .eq("id", order_id).single().execute().data)
     new_start = datetime.fromisoformat(order["window_start"]) + timedelta(days=1)
     new_end = datetime.fromisoformat(order["window_end"]) + timedelta(days=1)
-    sb.table("orders").update({
+
+    update = {
         "status": "new",                      # planner will pick it up again
         "window_start": new_start.isoformat(),
         "window_end": new_end.isoformat(),
-    }).eq("id", order_id).execute()
+    }
+    if order["customer_tier"] == "enterprise":
+        update["priority"] = 1   # special care: jump the queue tomorrow
+
+    sb.table("orders").update(update).eq("id", order_id).execute()
     sb.table("notifications").insert(
         {"order_id": order_id, "kind": "reschedule"}).execute()
     return "order moved to tomorrow, back in planning pool, customer queued"
@@ -31,7 +36,6 @@ def execute_reschedule(sb, order_id: int):
 ACTIONS = {
     "notify_delay": execute_notify_delay,
     "reschedule_next_day": execute_reschedule,
-    # escalate_to_manager: deliberately absent — Phase 5's job
 }
 
 
@@ -40,8 +44,7 @@ def run():
     rows = (sb.table("proposals")
             .select("*, exceptions(order_id)")
             .in_("status", ["pending", "approved"]).execute().data)
-    auto = [p for p in rows if p["action"] in ACTIONS and (
-            p["status"] == "approved" or p["risk_tier"] in AUTO_TIERS)]
+    auto = [p for p in rows if p["action"] in ACTIONS]
     frozen = [p for p in rows if p not in auto]
 
     for p in auto:
@@ -55,7 +58,7 @@ def run():
 
     for p in frozen:
         print(f"⏸  T{p['risk_tier']} proposal {p['id']} ({p['action']}) — "
-              f"awaiting Manager/human (Phase 5)")
+              f"no handler, left pending")
     print(f"\nExecuted {len(auto)}, frozen {len(frozen)}.")
 
 

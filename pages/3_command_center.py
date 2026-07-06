@@ -154,3 +154,15 @@ for p in t3:
 if st.button("▶ Run executor (apply approved actions)"):
     run_executor()
     st.rerun()
+
+# ---------- 6) DAILY REPORT ----------
+st.divider()
+st.subheader("📊 Daily report")
+rep = (sb.table("reports").select("created_at, stats, summary")
+       .order("id", desc=True).limit(1).execute().data)
+if rep:
+    st.write(rep[0]["summary"])
+    with st.expander("Full statistics"):
+        st.json(rep[0]["stats"])
+else:
+    st.caption("No report yet — run a day.")
