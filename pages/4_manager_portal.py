@@ -36,7 +36,18 @@ with tab_orders:
         q = q.eq("source", f_source)
     if f_search.strip():
         q = q.ilike("customer_name", f"%{f_search.strip()}%")
-    rows = q.limit(200).execute().data
+
+    try:
+        rows = q.limit(200).execute().data
+    except Exception as e:
+        st.error(f"Could not load orders: {e}")
+        st.caption(
+            "Common causes: a selected column doesn't exist on the "
+            "`orders` table, or Row Level Security is blocking SELECT "
+            "for the key currently configured in Streamlit secrets."
+        )
+        rows = []
+
     st.dataframe(rows, use_container_width=True, hide_index=True)
     st.caption(f"{len(rows)} orders shown")
 
@@ -51,13 +62,16 @@ with tab_orders:
                             format_func=lambda r: f"#{r['id']} — "
                             f"{r['customer_name']} ({r['weight_kg']}kg)")
         if st.button("🚫 Cancel this order"):
-            sb.table("orders").update({"status": "cancelled"}) \
-              .eq("id", pick["id"]).eq("status", "new").execute()
-            sb.table("notifications").insert(
-                {"order_id": pick["id"], "kind": "cancellation"}).execute()
-            st.success(f"Order #{pick['id']} cancelled — customer "
-                       "notification queued.")
-            st.rerun()
+            try:
+                sb.table("orders").update({"status": "cancelled"}) \
+                  .eq("id", pick["id"]).eq("status", "new").execute()
+                sb.table("notifications").insert(
+                    {"order_id": pick["id"], "kind": "cancellation"}).execute()
+                st.success(f"Order #{pick['id']} cancelled — customer "
+                           "notification queued.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Could not cancel order: {e}")
 
 # ══════════════════════════ FLEET TAB ══════════════════════════
 with tab_fleet:
