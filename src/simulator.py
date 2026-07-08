@@ -1,21 +1,19 @@
 """Simulation engine: plays out the day in accelerated time,
 injects reality (traffic, lateness, failed deliveries),
-and publishes live GPS positions for the Command Center map."""
+and publishes live GPS positions for the Command Center map.
+Chaos dials are read from the settings table, not hardcoded."""
 import random
 import time
 
 from src.db import get_client
 from src.matrix import DEPOT
+from src.settings_helper import get_settings
 
 SPEED = 0.1           # real seconds per simulated minute
 random.seed()         # set a number, e.g. random.seed(42), for repeatable days
 
-# --- the reality model (the chaos dials) ---
-P_TRAFFIC_PER_ROUTE = 0.30    # chance a route hits a traffic jam somewhere
 TRAFFIC_DELAY = (15, 40)      # minutes added to every remaining stop
-P_STOP_LATE = 0.20            # chance an individual stop slips
 STOP_DELAY = (5, 25)
-P_DELIVERY_FAILS = 0.10       # nobody home / wrong address
 
 
 def hhmm(m):
@@ -46,11 +44,15 @@ def load_day(sb):
 
 
 # ---------------- reality injection ----------------
-def inject_reality(events):
+def inject_reality(events, settings):
     """Decide, per route and per stop, what ACTUALLY happens."""
+    p_traffic = settings["p_traffic_per_route"]
+    p_late = settings["p_stop_late"]
+    p_fails = settings["p_delivery_fails"]
+
     delays = {}  # route_id -> (from_seq, minutes) traffic jam
     for rid in {e["route_id"] for e in events}:
-        if random.random() < P_TRAFFIC_PER_ROUTE:
+        if random.random() < p_traffic:
             route_ev = [e for e in events if e["route_id"] == rid]
             start_seq = random.choice(route_ev)["seq"]
             delays[rid] = (start_seq, random.randint(*TRAFFIC_DELAY))
@@ -61,10 +63,10 @@ def inject_reality(events):
             if e["seq"] >= from_seq:
                 delay += minutes
                 e["traffic"] = True
-        if random.random() < P_STOP_LATE:
+        if random.random() < p_late:
             delay += random.randint(*STOP_DELAY)
         e["actual"] = e["planned"] + delay
-        e["failed"] = random.random() < P_DELIVERY_FAILS
+        e["failed"] = random.random() < p_fails
     return sorted(events, key=lambda e: e["actual"])
 
 
@@ -105,7 +107,10 @@ def publish_positions(sb, tracks, drivers_by_route, clock):
 # ---------------- the day itself ----------------
 def run():
     sb = get_client()
-    events = inject_reality(load_day(sb))
+    settings = get_settings()
+    print(f"[simulator] chaos dials: traffic={settings['p_traffic_per_route']}, "
+          f"late={settings['p_stop_late']}, fails={settings['p_delivery_fails']}")
+    events = inject_reality(load_day(sb), settings)
     if not events:
         print("Nothing to simulate — dispatch some routes first.")
         return

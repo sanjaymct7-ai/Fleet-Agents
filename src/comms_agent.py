@@ -19,6 +19,8 @@ TEMPLATE = {
                    "be completed today and is rescheduled for tomorrow in the "
                    "same time window.",
     "confirmation": "Confirm that order #{oid} was delivered successfully.",
+    "cancellation": "Inform the customer that order #{oid} has been cancelled "
+                    "as requested and no delivery will be attempted.",
 }
 
 PROMPT = """You write customer notifications for a delivery company.

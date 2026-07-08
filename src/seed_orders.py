@@ -1,10 +1,10 @@
-"""Step 2.2 — write generated orders into Supabase."""
+"""Step 2.2 — write generated orders into Supabase.
+Order volume is read from settings, not hardcoded."""
 from dataclasses import asdict
 
 from src.db import get_client
 from src.generator import make_order
-
-N_ORDERS = 30  # a modest "day" — enough to make routing interesting
+from src.settings_helper import get_settings
 
 
 def order_to_row(order) -> dict:
@@ -17,16 +17,14 @@ def order_to_row(order) -> dict:
 
 def seed():
     sb = get_client()
+    n_orders = int(get_settings()["n_orders_per_day"])
 
     # 1) Clear previous synthetic orders so re-runs don't pile up.
-    #    (.neq("id", 0) means "where id != 0", i.e. every row —
-    #     Supabase requires *some* filter on delete as a safety rail.)
     sb.table("orders").delete().neq("id", 0).execute()
 
     # 2) Generate + insert in ONE batched request.
-    rows = [order_to_row(make_order()) for _ in range(N_ORDERS)]
+    rows = [order_to_row(make_order()) for _ in range(n_orders)]
     result = sb.table("orders").insert(rows).execute()
-
     print(f"Inserted {len(result.data)} orders.")
     print("Sample row as stored:", result.data[0])
 

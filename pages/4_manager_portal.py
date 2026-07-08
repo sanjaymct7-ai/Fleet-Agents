@@ -1,20 +1,61 @@
 """Manager Portal — where the warehouse manager acts, not just watches.
-Tab 1: Fleet (drivers + vehicles), with soft delete (deactivate/retire)."""
+Orders tab: monitor all orders (table + filters), rules-based cancel.
+Fleet tab: drivers + vehicles CRUD, with soft delete (deactivate/retire).
+Customers place orders via the separate Place Order page — manager only monitors."""
 import streamlit as st
 
 from src.db import get_client
 
-st.set_page_config(page_title="Manager Portal", page_icon="🧰", layout="wide")
-st.title("🧰 Manager Portal")
+st.set_page_config(page_title="Manager Portal", page_icon="🗂️", layout="wide")
+st.title("🗂️ Manager Portal")
 
 sb = get_client()
 
-tab_fleet, tab_orders, tab_settings, tab_analytics = st.tabs(
-    ["🚚 Fleet", "📦 Orders", "⚙️ Settings", "📈 Analytics"])
+tab_orders, tab_fleet, tab_settings, tab_analytics = st.tabs(
+    ["📦 Orders", "🚚 Fleet", "⚙️ Settings", "📈 Analytics"])
 
-# =========================================================
-# FLEET TAB — drivers + vehicles CRUD
-# =========================================================
+# ══════════════════════════ ORDERS TAB ══════════════════════════
+with tab_orders:
+    st.subheader("All orders")
+    g1, g2, g3 = st.columns(3)
+    f_status = g1.multiselect("Status", ["new", "planned", "assigned",
+                                         "delivered", "failed", "cancelled"])
+    f_source = g2.selectbox("Source", ["all", "manual", "generator"])
+    f_search = g3.text_input("Search customer")
+
+    q = sb.table("orders").select(
+        "id, customer_name, customer_tier, priority, weight_kg, "
+        "window_start, window_end, status, source").order("id", desc=True)
+    if f_status:
+        q = q.in_("status", f_status)
+    if f_source != "all":
+        q = q.eq("source", f_source)
+    if f_search.strip():
+        q = q.ilike("customer_name", f"%{f_search.strip()}%")
+    rows = q.limit(200).execute().data
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.caption(f"{len(rows)} orders shown")
+
+    st.divider()
+    st.subheader("Cancel an order")
+    cancellable = [r for r in rows if r["status"] == "new"]
+    if not cancellable:
+        st.caption("Only orders still in status 'new' can be cancelled — "
+                   "none match the current filter.")
+    else:
+        pick = st.selectbox("Order", cancellable,
+                            format_func=lambda r: f"#{r['id']} — "
+                            f"{r['customer_name']} ({r['weight_kg']}kg)")
+        if st.button("🚫 Cancel this order"):
+            sb.table("orders").update({"status": "cancelled"}) \
+              .eq("id", pick["id"]).eq("status", "new").execute()
+            sb.table("notifications").insert(
+                {"order_id": pick["id"], "kind": "cancellation"}).execute()
+            st.success(f"Order #{pick['id']} cancelled — customer "
+                       "notification queued.")
+            st.rerun()
+
+# ══════════════════════════ FLEET TAB ══════════════════════════
 with tab_fleet:
     st.subheader("Drivers")
 
@@ -102,20 +143,31 @@ with tab_fleet:
                 else:
                     st.error("Name is required.")
 
-# =========================================================
-# ORDERS TAB — placeholder for now
-# =========================================================
-with tab_orders:
-    st.info("Orders browser + Intake textbox coming next.")
-
-# =========================================================
-# SETTINGS TAB — placeholder for now
-# =========================================================
+# ══════════════════════════ SETTINGS TAB (placeholder) ══════════════════════════
 with tab_settings:
-    st.info("Chaos dials + depot settings coming next.")
+    from src.settings_helper import get_settings, set_setting
 
-# =========================================================
-# ANALYTICS TAB — placeholder for now
-# =========================================================
+    st.subheader("Simulation settings")
+    st.caption("These control tomorrow's simulated day. Changes apply on the next Run-day.")
+
+    current = get_settings()
+
+    traffic = st.slider("Chance of traffic jam per route", 0.0, 1.0,
+                        float(current["p_traffic_per_route"]), 0.05)
+    late = st.slider("Chance an individual stop runs late", 0.0, 1.0,
+                     float(current["p_stop_late"]), 0.05)
+    fails = st.slider("Chance a delivery fails (nobody home)", 0.0, 0.5,
+                      float(current["p_delivery_fails"]), 0.01)
+    n_orders = st.slider("Orders per day", 5, 100,
+                         int(current["n_orders_per_day"]), 5)
+
+    if st.button("💾 Save settings"):
+        set_setting("p_traffic_per_route", traffic)
+        set_setting("p_stop_late", late)
+        set_setting("p_delivery_fails", fails)
+        set_setting("n_orders_per_day", n_orders)
+        st.success("Settings saved — will apply on the next Run-day.")
+
+# ══════════════════════════ ANALYTICS TAB (placeholder) ══════════════════════════
 with tab_analytics:
     st.info("Trends from report history coming next.")
