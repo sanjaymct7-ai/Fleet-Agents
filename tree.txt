@@ -1,0 +1,40 @@
+fleet-agents\
+├── .gitignore
+├── app.py
+├── README.md
+├── requirements.txt
+├── CLAUDE.md                           (session notes & architecture)
+├── .streamlit\
+│   ├── secrets.toml                    (git-ignored — never share its contents)
+│   └── secrets.toml.example
+├── db\
+│   └── schema_phase1.sql               (updated: priority removed, 2 tiers only)
+├── pages\
+│   ├── 0_place_order.py                ❌ DELETED (2024-07-08)
+│   ├── 3_command_center.py
+│   ├── 4_manager_portal.py             (updated: Live Map tab + real addresses)
+│   └── 5_customer.py                   ✅ NEW (2024-07-08) — two-door portal
+└── src\
+    ├── __init__.py
+    ├── comms_agent.py                  (handles standard & enterprise tiers)
+    ├── db.py
+    ├── dispatch_agent.py
+    ├── escalation_graph.py             (idle post-pivot)
+    ├── executor.py
+    ├── generator.py                    (updated: no priority weights)
+    ├── geocoding.py                    ✅ NEW (2024-07-08) — Geoapify wrapper
+    ├── intake_agent.py                 (updated: real addresses, 2 tiers)
+    ├── llm.py
+    ├── manager_agent.py                (idle post-pivot)
+    ├── matrix.py
+    ├── planner.py
+    ├── recovery_agent.py               (updated: no priority refs)
+    ├── reporting_agent.py
+    ├── reset_day.py
+    ├── run_day.py
+    ├── seed_drivers.py
+    ├── seed_orders.py
+    ├── settings_helper.py              (⚠️ contents unknown — paste before editing)
+    ├── simulator.py
+    ├── solver.py                       (no priority in VRP model)
+    └── tracking_agent.py

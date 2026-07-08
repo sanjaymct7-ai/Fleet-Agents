@@ -11,7 +11,7 @@ MENU = ["notify_delay", "reschedule_next_day"]
 
 PROMPT = """You are a logistics recovery planner. An exception occurred.
 Exception: {exc_type} — {detail}
-Order: #{order_id}, customer tier: {tier}, priority: {priority} (1=highest)
+Order: #{order_id}, customer tier: {tier}
 
 Choose ONE action from exactly this list: {menu}
 Guidance: minor lateness needs only a delay notification; a failed
@@ -34,7 +34,7 @@ def risk_tier(action: str, tier: str, exc_type: str) -> int:
 def judge(exc: dict, order: dict) -> dict | None:
     raw = ask_llm(PROMPT.format(
         exc_type=exc["type"], detail=exc["detail"], order_id=order["id"],
-        tier=order["customer_tier"], priority=order["priority"], menu=MENU))
+        tier=order["customer_tier"], menu=MENU))
     try:
         data = json.loads(raw.replace("```json", "").replace("```", "").strip())
     except json.JSONDecodeError:
@@ -58,7 +58,7 @@ def run():
                   f"(staffing note — no customer action available)")
             continue
 
-        order = (sb.table("orders").select("id, customer_tier, priority")
+        order = (sb.table("orders").select("id, customer_tier")
                  .eq("id", exc["order_id"]).single().execute().data)
         verdict = judge(exc, order)
         if verdict is None:
@@ -76,4 +76,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-    

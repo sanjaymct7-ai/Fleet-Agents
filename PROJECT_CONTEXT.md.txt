@@ -1,0 +1,34 @@
+COMPACTED CONTEXT — fleet-agents project
+Active goals & open blockers
+
+✅ VERIFIED 2026-07-08 (was oldest debt): vehicles-slice test — python -m src.solver prints the 5-vehicle fleet line (Van 1–4 @400kg, Lorry 1 @800kg), Lorry absorbs heavy loads, no NO SOLUTION.
+✅ VERIFIED 2026-07-08: Manager Portal Orders tab checklist (🎲 sample → parse → edit → create with source='manual'; cancel → cancellation notification queued).
+✅ VERIFIED 2026-07-08: full local testing checklist (Setup Check, Customer Portal all paths, Live Map, settings_helper reviewed).
+DONE (committed): ③ Customer page (pages/5_customer.py, pseudo-login two-door), ④ Fleet tab CRUD, ⑤ Settings tab (chaos dials). Note: 0_Place_Order.py was DELETED; customer flow now lives entirely in 5_customer.py.
+Resume point = COMMIT & DEPLOY the uncommitted refactor (~1,645 insertions / 23 files + untracked pages/5_customer.py, src/geocoding.py) → git push → Streamlit redeploy → re-verify hosted.
+Next builds (priority order): ⑥ Analytics from reports.stats jsonb. ⑦ Cleanup idle dead code (manager_agent.py, escalation_graph.py, Approvals panel). ⑧ FINALE (deferred by decision): Supabase Auth + customer_id + RLS + service-role split — spec agreed (self-signup, profile editing, auth-gated ordering/tracking); do NOT run RLS SQL or copy service_role key until then.
+
+Key decisions in force
+
+₹0 budget, always. Gemini Flash primary → Groq fallback (in src/llm.py, temp 0); $5 OpenAI unspent. Geoapify matrix (~310 credits/31×31) + travel_cache + haversine fallback; Geoapify wants [lng,lat].
+D8 pivot: HITL removed, fully autonomous. AUTO_TIERS=(0,1,2,3); Recovery menu = ["notify_delay","reschedule_next_day"]; no_driver → log+resolve; enterprise failed delivery auto-reschedules with priority=1. manager_agent.py, escalation_graph.py, Approvals panel = idle dead code.
+Single human = warehouse manager; dashboard IS the alerting.
+City = Newcastle-upon-Tyne bbox (accidental, kept). DEPOT in src/matrix.py.
+
+File paths (repo fleet-agents, public GitHub, deploys to Streamlit Cloud on push)
+src/: db.py (get_client(), anon key, @st.cache_resource), llm.py (ask_llm), generator.py (Order dataclass, tiers 70/20/10), seed_orders.py, seed_drivers.py (⚠️ delete-all — don't run anymore), matrix.py (get_matrix, load_stops, DEPOT), solver.py (reads active vehicles table, per-vehicle caps, Time dimension, disjunctions penalty 100k, 10s GUIDED_LOCAL_SEARCH), planner.py (plan_and_save, FK-ordered wipe: stops before routes), dispatch_agent.py (rules-only; raises no_driver), simulator.py (P_TRAFFIC .3, P_STOP_LATE .2, P_DELIVERY_FAILS .10; GPS via build_tracks/position_at/publish_positions every 3rd sim-min; queues confirmation), tracking_agent.py (scan late>15min), recovery_agent.py (post-D8), executor.py (post-D8), comms_agent.py (TEMPLATE incl. cancellation, TONE by tier), reporting_agent.py (stats in code + 1 LLM paragraph), reset_day.py (FK-ordered), run_day.py (run_day(log), sets simulator.SPEED=0.01).
+pages/: 3_command_center.py (guarded autorefresh via st.session_state.running_day, Run-day button, map, KPIs, feeds), 4_manager_portal.py (Orders tab live; Fleet/Settings/Analytics placeholders), 0_Place_Order.py (user-authored, contents unseen — always ask for paste before editing).
+Schema (Supabase)
+drivers(shift_start/end text 'HH:MM', max_hours, status off_shift/available/on_route/unavailable) · orders(+source generator/manual; status new/planned/assigned/in_transit/delivered/failed/cancelled) · routes(+vehicle_id FK) · route_stops(seq, planned/actual_arrival) · travel_cache(pair_key PK, 5dp) · exceptions(type late/failed_delivery/no_driver; UNIQUE(type,order_id) + partial unique (type,route_id) where order_id null) · proposals(risk_tier 0-3) · notifications(kind incl. cancellation) · vehicle_positions(route_id PK) · reports(stats jsonb) · vehicles(status active/maintenance/retired).
+Agreed patterns
+
+Blackboard: agents coordinate only via DB statuses; one writer per table. LLM extracts/judges from fixed menus; deterministic code validates/computes/mutates; LLM never geocodes (PLACES dict is truth) or free-writes to customers (templates).
+JSON from LLM: strip ```json fences, json.loads, gate against menu, leave-for-retry on parse failure.
+Full-file replacements over fragment edits (user preference). Run via python -m src.module from repo root. Verify with SQL after every step. Commit per working step.
+Free-tier tripwires: Supabase pauses ~7 idle days; no backups (seeds = backup); hosted app runs day synchronously (page greys — expected).
+
+Failing/flaky items & fixes tried
+
+No failing tests currently. Historical fixes worth remembering: solver NO SOLUTION = capacity headroom (~20–30% over demand); PGRST205 = table not created; git pathspec fail = untracked file (use del) or case mismatch; "not a git repository" = wrong cwd; ScriptRunContext warning = harmless in bare scripts.
+
+Handoff doc exists at docs/-ready fleet-agents-HANDOFF.md (delivered last message). Resume point (2026-07-08): all local verification passed — commit & push the refactor, redeploy, re-verify hosted, then build Analytics tab.

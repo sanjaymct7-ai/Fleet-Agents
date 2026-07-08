@@ -1,0 +1,122 @@
+# CLAUDE.md — fleet-agents (AI Multi-Agent Fleet Logistics)
+> Context file for AI assistants. Code source of truth = the public GitHub repo
+> `sanjaymct7-ai/fleet-agents` and the user's local disk — ALWAYS ask the user to
+> paste a file's current contents before editing it. This doc is the map, not the code.
+> User is a learner: teach step-by-step, explain concepts before code, prefer
+> FULL-FILE replacements over fragment edits, verify every step with SQL.
+
+## 1. CORE TECH STACK
+- **Python 3.14** (Windows 11, run modules from repo root as `python -m src.<module>`)
+- **LangChain (>=0.3)** + **LangGraph (>=0.2)** — agent framework; LangGraph interrupt/checkpointer machinery exists but is currently idle (see §2 pivot)
+- **LLMs (all free tier):** Gemini Flash `gemini-2.0-flash` via `langchain-google-genai` (primary) → **Groq Llama-3.3-70B-versatile** via `langchain-groq` (automatic 429/exception fallback). Temperature 0 everywhere. $5 OpenAI credit exists, deliberately unused.
+- **Google OR-Tools (>=9.10)** — VRP solver (capacity + time windows + disjunctions)
+- **Supabase Postgres** (free tier, region ap-south-1 Mumbai) via `supabase` Python client (>=2.6), anon key only (no RLS yet — deferred by decision)
+- **Geoapify Geocoding & Route Matrix API** (free 3,000 credits/day; a 31×31 matrix ≈ 310 credits) with Postgres cache + haversine fallback. NOTE: Geoapify expects **[lng, lat]**; app stores (lat, lng).
+- **Streamlit (>=1.37)** + **Folium/streamlit-folium** (OpenStreetMap tiles) + **streamlit-autorefresh** (10s poll)
+- **Hosting:** Streamlit Community Cloud from the public GitHub repo; auto-redeploys on `git push`. Secrets ONLY in `.streamlit/secrets.toml` (git-ignored) + Streamlit Cloud Secrets panel: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `GEOAPIFY_API_KEY`.
+- **LangSmith** free tier for tracing. **HARD CONSTRAINT: ₹0 total spend** — no paid APIs, no credit-card services (Google Maps, Twilio, etc. are banned).
+
+## 2. FIXED ARCHITECTURAL DECISIONS
+- **Blackboard pattern:** agents NEVER call each other; they coordinate exclusively through DB state. Order/route/exception `status` fields choreograph handoffs (e.g., dropped orders stay `new` → next planner run sweeps them up).
+- **One writer per table:** each table has exactly one component allowed to write it.
+- **LLM/code division:** LLMs only extract (Intake), judge from a FIXED menu (Recovery), and write within templates (Comms) or summarize given stats (Reporting). Deterministic code does all validation, geocoding, math, and state mutation. LLM never geocodes and never free-writes to customers.
+- **Propose → gate → execute separation** (structure retained even after the pivot below): Recovery writes `proposals`; `risk_tier()` (pure rules, never LLM) tiers them; `executor.py` (no LLM) applies them.
+- **PIVOT D8 — HITL removed, fully autonomous:** all tiers auto-execute; Recovery menu = `["notify_delay","reschedule_next_day"]`; `no_driver` exceptions log-and-resolve as staffing notes; enterprise failed deliveries auto-reschedule with enterprise tier treated specially. Risk tiers survive as visibility flags only. `manager_agent.py`, `escalation_graph.py`, and the Command Center Approvals panel are DEAD/IDLE code awaiting cleanup.
+- **Two-door system (NEW THIS SESSION):** 
+  - **Manager portal** (pages/4_manager_portal.py) — see ALL orders, ALL vehicles, live fleet map, analytics, settings.
+  - **Customer portal** (pages/5_customer.py) — see ONLY your orders, track YOUR van in real-time, get YOUR messages, submit feedback. Pseudo-login (customer name) teaches data scoping discipline: every query filters by `customer_name`.
+  - In production, Supabase Auth + RLS would enforce this. Here it's a pedagogical exercise.
+- **Order priority REMOVED (NEW THIS SESSION):** All orders are standard. No tiering by urgency (1-5 scale). Simplifies solver, simplifies UI, clarifies focus.
+- **Customer tiers simplified to 2 ONLY (NEW THIS SESSION):** `standard` (individual customers) and `enterprise` (company accounts). Removed `premium` tier entirely. Updated schema constraints, LLM prompts, agent logic.
+- **Real addresses + Geoapify (NEW THIS SESSION):** 
+  - Old: hardcoded `PLACES` dict (10 locations)
+  - New: customers type real addresses → `src/geocoding.py` queries Geoapify → lat/lng stored
+  - Why: production-ready, works anywhere, no maintenance of place lists
+  - Intake agent LLM extracts `pickup_address` and `drop_address` (text), validation geocodes them
+- **Live manager map (NEW THIS SESSION):** Manager Portal has new "🗺️ Live Map" tab showing all vehicle_positions as Folium markers with zoom, fit, satellite tiles. Shows ONLY all vehicles (manager view). Customer portal shows mini-map with ONLY their van + drop point (customer view).
+- **DEFERRED-TO-END (decision D9):** Supabase Auth + `profiles` + `orders.customer_id` + RLS + service-role/anon client split. Spec agreed (self-signup, profile editing, auth-gated order/track). DO NOT enable RLS or copy the service_role key before that phase.
+- **Depot model routing:** vehicles deliver drop-points from one depot (`DEPOT` in `matrix.py`); true pickup-and-delivery is a declared stretch goal, not built.
+- Fleet is data: `vehicles` table (heterogeneous capacities) feeds the solver; `N_VEHICLES` constants are gone.
+
+## 3. SYSTEM CONVENTIONS & STYLING
+- LLM JSON protocol: prompt demands "ONLY JSON"; parse = strip ```json fences → `json.loads` → gate result against the allowed menu/keys → on failure, leave work item for retry (never crash, never accept out-of-menu actions).
+- DB deletes must follow FK order (children first): notifications → proposals → exceptions → vehicle_positions → route_stops → routes.
+- Correctness pushed into the schema: CHECK constraints on every status/enum, UNIQUE constraints as dedupe rails (`exceptions(type, order_id)` + partial unique index `(type, route_id) WHERE order_id IS NULL`).
+- Timestamps stored ISO/timestamptz; solver works in **minutes-since-midnight** ints; driver shifts are `'HH:MM'` text.
+- Streamlit: `@st.cache_resource` for singletons; `st.form` for multi-field inputs; `st.session_state.running_day` guards autorefresh during the synchronous Run-day; page files in `pages/` are lowercase (Linux hosting is case-sensitive — burned once).
+- Print-based logging with tags (`[llm] answered by: groq`, `[matrix] ... 0 credits`); cost printed BEFORE any credit-spending API call.
+- Git: commit per working step with descriptive message; `git rm` only works on tracked files; never commit secrets (revoke+reissue if leaked, deleting the commit is not enough).
+
+## 4. THE MODULE MAP
+**DB tables:** 
+- `drivers` (id, name, home_lat, home_lng, shift_start, shift_end, max_hours, status)
+- `orders` (id, created_at, customer_name, customer_tier='standard'|'enterprise', pickup_lat/lng, drop_lat/lng, window_start, window_end, weight_kg, status) — ❌ REMOVED: priority column
+- `routes` (id, created_at, driver_id, vehicle_id, vehicle_capacity_kg, total_distance_km, status)
+- `route_stops` (id, route_id, order_id, seq, stop_type, planned_arrival, actual_arrival, status)
+- `travel_cache` (from_lat, from_lng, to_lat, to_lng, distance_m, time_sec, cached_at)
+- `exceptions` (id, type, order_id|NULL, route_id|NULL, detail, status='open'|'proposed'|'resolved')
+- `proposals` (id, exception_id, action, reasoning, risk_tier, created_at)
+- `notifications` (id, order_id, kind='cancellation'|'confirmation'|'delay'|'reschedule', body, status)
+- `vehicle_positions` (id, route_id, driver_id, driver_name, lat, lng, sim_time, updated_at)
+- `reports` (id, created_at, stats jsonb, summary text)
+- `vehicles` (id, name, capacity_kg, status='active'|'maintenance'|'retired')
+- `comms_agent` (id, order_id, customer_name, message_type, message_text, created_at) [used by customer portal]
+- `feedback` (id, order_id, customer_name, rating, comment, created_at) [customer portal post-delivery]
+
+## 5. DISCOVERED BUGS & SOLUTIONS
+- **Solver `NO SOLUTION`:** fleet capacity had zero headroom vs total demand (bin-packing needs slack) → give ~20–30% headroom; heaviest single order must fit one vehicle. "No solution" is an ANSWER, not an error.
+- **7 orders silently vanished:** dispatch found no eligible driver, route stayed unassigned, simulator skipped it → fix: dispatch raises `no_driver` exception + partial unique index for route-level dedupe. Diagnosed via KPI arithmetic (20+3 ≠ 30) — check data before blaming UI.
+- **`PGRST205 table not found`:** SQL step skipped → create table; generally means schema drift.
+- **Geocode hallucination risk:** LLM must NEVER output coordinates (plausible-but-wrong) → address lookup + reject unknowns.
+- **Null-island bugs:** placeholder `(0.0, 0.0)` in DEPOT/PLACES/bbox silently poisons data → always replace before running.
+- **`git rm` "pathspec did not match":** file was never tracked (use `del`) or case mismatch (`2_Approvals` vs `2_approvals`) — git is case-sensitive, Windows isn't.
+- **"not a git repository":** wrong cwd (a `cd` line got glued to the next command).
+- **Streamlit reruns killing state:** graph/checkpointer must live in `@st.cache_resource`; autorefresh must pause during Run-day via session_state flag or it kills the run.
+- **`streamlit_autorefresh` ModuleNotFound on cloud:** dependency missing from requirements.txt — every new pip install needs a requirements line.
+- **Geoapify quota:** matrix costs max(n,n)×min(n,10) credits (31×31=310, NOT 1/call) → Postgres cache mandatory; 2nd run must print "0 credits".
+- **ScriptRunContext warning** in bare scripts: harmless (st.secrets outside app).
+- **Supabase free tier:** pauses after ~7 idle days (click Resume); NO backups — seed scripts are the backup.
+- **reset re-run FK errors:** delete children before parents (order listed in §4).
+- **vehicle_positions column name:** was `lon`, corrected to `lng` (2024-07-08) to match Geoapify output order [lng, lat].
+- **Priority field removed:** all references deleted from orders table, solver, recovery_agent, comms_agent. No migration needed (field never stored customer-visible priority logic).
+
+## 6. CURRENT ACTIVE TASK & BLOCKERS
+Session 2024-07-08 completed major refactor:
+1. ✅ **Removed `priority` column** — all orders are standard, no urgency tiering
+2. ✅ **Simplified to 2 customer tiers** — `standard` (individual) and `enterprise` (company) only
+3. ✅ **Integrated Geoapify geocoding** — real address input, not hardcoded PLACES dict
+4. ✅ **Added Live Fleet Map** — Manager Portal shows all vehicles on Folium, zoomable
+5. ✅ **Built Customer Portal** — two-door system with pseudo-login, place order, track, messages, feedback
+6. ✅ **Deleted pages/0_place_order.py** — all customer functionality now in pages/5_customer.py
+
+**TESTING CHECKLIST (LOCAL) — ✅ ALL VERIFIED 2026-07-08:**
+- [x] Setup Check (app.py): all secrets ✓, all tables ✓, Gemini ✓
+- [x] Manager Portal Orders tab: no "priority" column, real addresses shown
+- [x] Manager Portal Live Map tab: vehicles render on Folium, zoom works
+- [x] Customer Portal login: dropdown shows existing customers, free-text accepts new names
+- [x] Customer Portal place order (AI): describe delivery, LLM parses, geocodes real addresses
+- [x] Customer Portal place order (quick form): enter real addresses, map validates
+- [x] Customer Portal track: orders show timeline, ETA, mini-map (if vehicle_positions populated)
+- [x] Customer Portal messages: empty inbox (ok until comms_agent runs)
+- [x] Customer Portal history: past orders visible with feedback form
+
+Verification debts — ✅ ALL CLOSED 2026-07-08:
+1. ✅ **`src/settings_helper.py` reviewed** — contents + importer confirmed; no longer a blocker for Settings-tab work.
+2. ✅ **Five-vehicle solver VERIFIED** — `python -m src.solver` shows Lorry handling heavy loads, all 5 vehicles deployed, NO "NO SOLUTION".
+3. ✅ **Orders-tab checklist VERIFIED** — intake form, parse sample, edit, save, filter, cancel, notification queued all working.
+
+## 7. NEXT STEP PREROGATIVES
+Phase 1 (local verification) is DONE. Working tree still holds the uncommitted
+refactor (~1,645 insertions / 23 files) + 2 untracked files (`pages/5_customer.py`,
+`src/geocoding.py`). Resume point = **commit & deploy**.
+
+1. **Commit the refactor** — `git add` including the two untracked files → commit to
+   main with a descriptive message → `git push`. Confirm no `secrets.toml` leaked.
+2. **Redeploy & re-verify hosted** — let Streamlit Cloud rebuild → re-run Setup Check
+   on the hosted URL.
+3. **Remaining features:**
+   - Analytics tab from `reports.stats` jsonb (last Manager Portal placeholder).
+   - Clean up idle/dead code: `manager_agent.py`, `escalation_graph.py`, Command
+     Center Approvals panel (all dead since the D8 pivot).
+4. **Deferred finale (D9):** Supabase Auth + `customer_id` + RLS + service-role split.
+   Do NOT run RLS SQL or copy the service_role key before this phase.

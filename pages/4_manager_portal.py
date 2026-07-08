@@ -1,8 +1,12 @@
 """Manager Portal — where the warehouse manager acts, not just watches.
 Orders tab: monitor all orders (table + filters), rules-based cancel.
 Fleet tab: drivers + vehicles CRUD, with soft delete (deactivate/retire).
+Fleet Map tab: live map showing all active vehicles with zoom-in capability.
 Customers place orders via the separate Place Order page — manager only monitors."""
 import streamlit as st
+import folium
+from streamlit_folium import st_folium
+import pandas as pd
 
 from src.db import get_client
 
@@ -11,8 +15,8 @@ st.title("🗂️ Manager Portal")
 
 sb = get_client()
 
-tab_orders, tab_fleet, tab_settings, tab_analytics = st.tabs(
-    ["📦 Orders", "🚚 Fleet", "⚙️ Settings", "📈 Analytics"])
+tab_orders, tab_fleet, tab_map, tab_settings, tab_analytics = st.tabs(
+    ["📦 Orders", "🚚 Fleet", "🗺️ Live Map", "⚙️ Settings", "📈 Analytics"])
 
 # ══════════════════════════ ORDERS TAB ══════════════════════════
 with tab_orders:
@@ -24,7 +28,7 @@ with tab_orders:
     f_search = g3.text_input("Search customer")
 
     q = sb.table("orders").select(
-        "id, customer_name, customer_tier, priority, weight_kg, "
+        "id, customer_name, customer_tier, weight_kg, "
         "window_start, window_end, status, source").order("id", desc=True)
     if f_status:
         q = q.in_("status", f_status)
@@ -143,7 +147,60 @@ with tab_fleet:
                 else:
                     st.error("Name is required.")
 
-# ══════════════════════════ SETTINGS TAB (placeholder) ══════════════════════════
+# ══════════════════════════ FLEET MAP TAB (LIVE) ══════════════════════════
+# ══════════════════════════ FLEET MAP TAB (LIVE) ══════════════════════════
+with tab_map:
+    st.subheader("🗺️ Live Fleet Map")
+    st.caption("Real-time vehicle positions. Zoom in/out to see details.")
+    
+    try:
+        # Get all active vehicle positions
+        positions = sb.table("vehicle_positions") \
+            .select("*") \
+            .order("updated_at", desc=True) \
+            .limit(100) \
+            .execute().data
+        
+        if not positions:
+            st.info("No vehicle positions yet. Run the simulator to populate.")
+        else:
+            # Build map centered on first vehicle
+            first = positions[0]
+            center_lat = float(first["lat"])
+            center_lng = float(first["lng"])
+            
+            m = folium.Map(
+                location=[center_lat, center_lng],
+                zoom_start=13,
+                tiles="OpenStreetMap"
+            )
+            
+            # Add all vehicle markers
+            for pos in positions:
+                lat = float(pos["lat"])
+                lng = float(pos["lng"])
+                driver = pos.get("driver_name", "Unknown")
+                sim_time = pos.get("sim_time", "N/A")
+                
+                folium.Marker(
+                    location=[lat, lng],
+                    popup=f"<b>{driver}</b><br>Time: {sim_time}",
+                    tooltip=driver,
+                    icon=folium.Icon(color="blue", icon="van", prefix="fa")
+                ).add_to(m)
+            
+            # Display map
+            st_folium(m, width=1200, height=600)
+            
+            # Table of positions
+            st.subheader("Vehicle Details")
+            df = pd.DataFrame(positions)
+            st.dataframe(df[["driver_name", "lat", "lng", "sim_time"]], use_container_width=True)
+    
+    except Exception as e:
+        st.error(f"Could not load map: {e}")
+
+# ══════════════════════════ SETTINGS TAB ══════════════════════════
 with tab_settings:
     from src.settings_helper import get_settings, set_setting
 
@@ -168,6 +225,6 @@ with tab_settings:
         set_setting("n_orders_per_day", n_orders)
         st.success("Settings saved — will apply on the next Run-day.")
 
-# ══════════════════════════ ANALYTICS TAB (placeholder) ══════════════════════════
+# ══════════════════════════ ANALYTICS TAB ══════════════════════════
 with tab_analytics:
     st.info("Trends from report history coming next.")
